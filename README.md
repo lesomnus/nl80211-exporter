@@ -3,6 +3,7 @@
 Reads the state of WiFi interfaces from Linux over [nl80211](https://wireless.docs.kernel.org/en/latest/en/developers/documentation/nl80211.html), the interface `iw`, `hostapd`, and `wpa_supplicant` use, and reports it as [OpenTelemetry](https://opentelemetry.io/) metrics:
 how strong and how fast the link to each station is, and how busy the channel of each radio is.
 
+It runs inside an OpenTelemetry Collector, as [`receiver/nl80211receiver`](receiver/nl80211receiver).
 On an access point, the stations are its clients; on a station interface, such as a router's uplink to another network, the station is the access point it is connected to.
 
 ## Metrics

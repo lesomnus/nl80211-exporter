@@ -1,0 +1,33 @@
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/receiver.yaml"
+      - "receiver/**"
+      - "metrics/**"
+      - "nl80211/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - ".github/workflows/receiver.yaml"
+      - "receiver/**"
+      - "metrics/**"
+      - "nl80211/**"
+      - "go.mod"
+      - "go.sum"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: receiver/nl80211receiver
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: receiver/nl80211receiver/go.mod
+          cache-dependency-path: receiver/nl80211receiver/go.sum
+      - run: go vet ./...
+      - run: go test -v -race ./...
