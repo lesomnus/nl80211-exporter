@@ -27,6 +27,11 @@ type fake struct {
 	surveyErr   map[string]error
 	physErr     error
 
+	ifiDetails    map[int]nl80211.InterfaceDetails
+	ifiDetailsErr error
+	staDetails    map[string]map[string]nl80211.StationDetails // by interface name, then MAC
+	staDetailsErr map[string]error
+
 	surveyCalls []string
 	physCalls   int
 	deadlines   []time.Time
@@ -48,6 +53,17 @@ func (f *fake) SurveyInfo(ifi *wifi.Interface) ([]*wifi.SurveyInfo, error) {
 		return nil, err
 	}
 	return f.surveys[ifi.Name], nil
+}
+
+func (f *fake) InterfaceDetails() (map[int]nl80211.InterfaceDetails, error) {
+	return f.ifiDetails, f.ifiDetailsErr
+}
+
+func (f *fake) StationDetails(ifi *wifi.Interface) (map[string]nl80211.StationDetails, error) {
+	if err := f.staDetailsErr[ifi.Name]; err != nil {
+		return nil, err
+	}
+	return f.staDetails[ifi.Name], nil
 }
 
 func (f *fake) PHYs() ([]*wifi.PHY, error) {
@@ -143,6 +159,7 @@ func TestRead(t *testing.T) {
 		Signal: -50, SignalAverage: -49, ReceiveBitrate: 1_200_900_000, TransmitBitrate: 1_080_600_000,
 		ReceivedBytes: 1 << 40, TransmittedBytes: 1 << 33, ReceivedPackets: 7, TransmittedPackets: 8,
 		TransmitRetries: 8600, TransmitFailed: 41, BeaconLosses: 2,
+		ReceiveRate: nl80211.Rate{MCS: -1}, TransmitRate: nl80211.Rate{MCS: -1},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("station:\n got %+v\nwant %+v", got, want)
@@ -281,5 +298,51 @@ func TestPHYNames(t *testing.T) {
 	}
 	if f.physCalls != 1 {
 		t.Errorf("names are asked once per radio not seen yet: %d calls", f.physCalls)
+	}
+}
+
+func TestReadDetails(t *testing.T) {
+	f := router()
+	f.ifiDetails = map[int]nl80211.InterfaceDetails{
+		12: {SSID: "upstream", TransmitPower: nl80211.Value[float64]{V: 20, OK: true}, CenterFrequency: nl80211.Value[int]{V: 5290, OK: true}},
+	}
+	f.staDetails = map[string]map[string]nl80211.StationDetails{
+		"phy1-sta0": {mac(0xaa).String(): {ExpectedThroughput: nl80211.Value[int]{V: 978_710_000, OK: true}, ChainSignal: map[int]int{0: -51, 1: -57}}},
+	}
+	f.stations["phy1-sta0"][0].TransmitRateInfo = wifi.RateInfo{
+		Bitrate: 1_200_900_000, ModulationType: wifi.RateModulationInfoTypeHE, ChannelWidth: wifi.ChannelWidth80,
+		Modulation: wifi.HEModulationInfo{BaseModulationInfo: wifi.BaseModulationInfo{MCS: 11, NSS: 2}},
+	}
+	s := read(t, f)
+
+	sta := s.Interfaces[0]
+	if sta.SSID != "upstream" || !sta.TransmitPower.OK || sta.TransmitPower.V != 20 || sta.CenterFrequency.V != 5290 {
+		t.Errorf("interface details: %+v", sta.InterfaceDetails)
+	}
+	if ap := s.Interfaces[1]; ap.SSID != "" || ap.TransmitPower.OK {
+		t.Errorf("an interface without details has none: %+v", ap.InterfaceDetails)
+	}
+	got := sta.Stations[0]
+	if got.ExpectedThroughput.V != 978_710_000 || got.ChainSignal[1] != -57 {
+		t.Errorf("station details: %+v", got.StationDetails)
+	}
+	if want := (nl80211.Rate{Mode: "he", MCS: 11, Streams: 2, Width: 80}); got.TransmitRate != want {
+		t.Errorf("transmit rate %+v, want %+v", got.TransmitRate, want)
+	}
+	if want := (nl80211.Rate{MCS: -1}); got.ReceiveRate != want {
+		t.Errorf("a rate not reported: %+v, want %+v", got.ReceiveRate, want)
+	}
+}
+
+func TestReadDetailsFail(t *testing.T) {
+	f := router()
+	f.ifiDetailsErr = errno(syscall.EIO)
+	f.staDetailsErr = map[string]error{"phy1-ap0": errno(syscall.EIO), "phy1-sta0": errno(syscall.EOPNOTSUPP)}
+	s, err := nl80211.NewReader(f).Read(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "interface details") || !strings.Contains(err.Error(), "phy1-ap0: station details") || strings.Contains(err.Error(), "phy1-sta0") {
+		t.Errorf("error: %v", err)
+	}
+	if s == nil || len(s.Interfaces) != 3 || len(s.Interfaces[1].Stations) != 1 || len(s.Channels) != 2 {
+		t.Fatalf("the rest is still read: %+v", s)
 	}
 }

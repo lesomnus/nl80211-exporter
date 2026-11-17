@@ -24,6 +24,7 @@ type Interface struct {
 	ChannelWidth int // MHz
 	// Stations of the interface; nil when its driver does not list them.
 	Stations []Station
+	InterfaceDetails
 }
 
 // Station is a peer of an interface, as nl80211 calls it:
@@ -51,6 +52,10 @@ type Station struct {
 	TransmitFailed     int
 	// Times the beacons of the access point were lost; only station interfaces count them.
 	BeaconLosses int
+	// How the last frames were received from and sent to the station.
+	ReceiveRate  Rate
+	TransmitRate Rate
+	StationDetails
 }
 
 // Channel is what a radio measured on the channel it is on, from its survey.
