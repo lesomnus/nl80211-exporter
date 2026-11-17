@@ -24,11 +24,29 @@ func snapshot(now time.Time) *nl80211.Snapshot {
 		Interfaces: []nl80211.Interface{
 			{
 				Name: "phy1-sta0", Type: nl80211.TypeStation, PHY: "phy1", Frequency: 5260, ChannelWidth: 80,
+				InterfaceDetails: nl80211.InterfaceDetails{SSID: "upstream", TransmitPower: nl80211.Value[float64]{V: 20, OK: true}, CenterFrequency: nl80211.Value[int]{V: 5290, OK: true}},
 				Stations: []nl80211.Station{{
 					MAC: upstream, Connected: 3 * time.Hour, Inactive: 330 * time.Millisecond,
 					Signal: -50, SignalAverage: -49, ReceiveBitrate: 1_200_900_000, TransmitBitrate: 1_080_600_000,
 					ReceivedBytes: 1 << 40, TransmittedBytes: 1 << 33, ReceivedPackets: 7, TransmittedPackets: 8,
 					TransmitRetries: 8600, TransmitFailed: 41, BeaconLosses: 2,
+					ReceiveRate:  nl80211.Rate{Mode: "he", MCS: 11, Streams: 2, Width: 80},
+					TransmitRate: nl80211.Rate{Mode: "he", MCS: 0, Streams: 1, Width: 20},
+					StationDetails: nl80211.StationDetails{
+						ReceiveAirtime:      nl80211.Value[time.Duration]{V: 165 * time.Second, OK: true},
+						TransmitAirtime:     nl80211.Value[time.Duration]{V: 226 * time.Second, OK: true},
+						AckSignal:           nl80211.Value[int]{V: -46, OK: true},
+						AckSignalAverage:    nl80211.Value[int]{V: -47, OK: true},
+						BeaconSignalAverage: nl80211.Value[int]{V: -45, OK: true},
+						BeaconsReceived:     nl80211.Value[int]{V: 345454, OK: true},
+						ChainSignal:         map[int]int{0: -45, 1: -54},
+						ChainSignalAverage:  map[int]int{0: -45, 1: -53},
+						ExpectedThroughput:  nl80211.Value[int]{V: 1_002_200_000, OK: true},
+						ReceiveDropped:      nl80211.Value[int]{V: 0, OK: true},
+						ReceivedMPDUs:       nl80211.Value[int]{V: 9000, OK: true},
+						FCSErrors:           nl80211.Value[int]{V: 3, OK: true},
+						Authorized:          nl80211.Value[bool]{V: false, OK: true},
+					},
 				}},
 			},
 			{
@@ -95,6 +113,8 @@ func TestCollect(t *testing.T) {
 	ifi := func(name, typ, phy string) labels {
 		return labels{"network.interface.name": name, "wifi.interface.type": typ, "wifi.phy.name": phy}
 	}
+	upIfi := ifi("phy1-sta0", "station", "phy1")
+	upIfi["wifi.ssid"] = "upstream"
 	sta := func(name, typ string, mac net.HardwareAddr, kvs ...any) labels {
 		l := labels{"network.interface.name": name, "wifi.interface.type": typ, "wifi.station.mac": mac.String()}
 		for i := 0; i < len(kvs); i += 2 {
@@ -115,10 +135,12 @@ func TestCollect(t *testing.T) {
 		start time.Time
 	}
 	for _, w := range []want{
-		{metrics.InterfaceFrequency, ifi("phy1-sta0", "station", "phy1"), 5260, time.Time{}},
+		{metrics.InterfaceFrequency, upIfi, 5260, time.Time{}},
+		{metrics.InterfaceCenterFrequency, upIfi, 5290, time.Time{}},
+		{metrics.InterfaceTransmitPower, upIfi, 20, time.Time{}},
 		{metrics.InterfaceChannelWidth, ifi("phy1-ap0", "ap", "phy1"), 80, time.Time{}},
 		{metrics.InterfaceFrequency, ifi("phy0-ap0", "ap", "phy0"), 2462, time.Time{}},
-		{metrics.StationCount, ifi("phy1-sta0", "station", "phy1"), 1, time.Time{}},
+		{metrics.StationCount, upIfi, 1, time.Time{}},
 		{metrics.StationCount, ifi("phy1-ap0", "ap", "phy1"), 2, time.Time{}},
 		{metrics.StationCount, ifi("phy0-ap0", "ap", "phy0"), 0, time.Time{}},
 
@@ -134,6 +156,23 @@ func TestCollect(t *testing.T) {
 		{metrics.StationBeaconLosses, sta("phy1-sta0", "station", upstream), 2, now.Add(-3 * time.Hour)},
 		{metrics.StationConnectedTime, sta("phy1-sta0", "station", upstream), 10800, time.Time{}},
 		{metrics.StationInactiveTime, sta("phy1-sta0", "station", upstream), 0.33, time.Time{}},
+		{metrics.StationAuthorized, sta("phy1-sta0", "station", upstream), 0, time.Time{}},
+		{metrics.StationChainSignal, sta("phy1-sta0", "station", upstream, "wifi.chain", int64(1)), -54, time.Time{}},
+		{metrics.StationChainSignalAverage, sta("phy1-sta0", "station", upstream, "wifi.chain", int64(0)), -45, time.Time{}},
+		{metrics.StationAckSignal, sta("phy1-sta0", "station", upstream), -46, time.Time{}},
+		{metrics.StationAckSignalAverage, sta("phy1-sta0", "station", upstream), -47, time.Time{}},
+		{metrics.StationBeaconSignalAverage, sta("phy1-sta0", "station", upstream), -45, time.Time{}},
+		{metrics.StationMCS, sta("phy1-sta0", "station", upstream, append(rx, "wifi.rate.mode", "he")...), 11, time.Time{}},
+		{metrics.StationMCS, sta("phy1-sta0", "station", upstream, append(tx, "wifi.rate.mode", "he")...), 0, time.Time{}},
+		{metrics.StationSpatialStreams, sta("phy1-sta0", "station", upstream, append(rx, "wifi.rate.mode", "he")...), 2, time.Time{}},
+		{metrics.StationRateWidth, sta("phy1-sta0", "station", upstream, append(tx, "wifi.rate.mode", "he")...), 20, time.Time{}},
+		{metrics.StationExpectedThroughput, sta("phy1-sta0", "station", upstream), 1_002_200_000, time.Time{}},
+		{metrics.StationAirtime, sta("phy1-sta0", "station", upstream, rx...), 165, now.Add(-3 * time.Hour)},
+		{metrics.StationAirtime, sta("phy1-sta0", "station", upstream, tx...), 226, now.Add(-3 * time.Hour)},
+		{metrics.StationReceiveDropped, sta("phy1-sta0", "station", upstream), 0, now.Add(-3 * time.Hour)},
+		{metrics.StationReceivedMPDUs, sta("phy1-sta0", "station", upstream), 9000, now.Add(-3 * time.Hour)},
+		{metrics.StationFCSErrors, sta("phy1-sta0", "station", upstream), 3, now.Add(-3 * time.Hour)},
+		{metrics.StationBeacons, sta("phy1-sta0", "station", upstream), 345454, now.Add(-3 * time.Hour)},
 
 		{metrics.StationSignal, sta("phy1-ap0", "ap", client), -66, time.Time{}},
 		{metrics.StationIO, sta("phy1-ap0", "ap", client, rx...), 0, now.Add(-time.Minute - 400*time.Millisecond)},
@@ -170,6 +209,11 @@ func TestCollect(t *testing.T) {
 		// No channel for an interface that is on none, and no count of stations its driver does not list.
 		{d: metrics.InterfaceFrequency, attrs: ifi("wlan9", "station", "phy9")},
 		{d: metrics.StationCount, attrs: ifi("wlan9", "station", "phy9")},
+		// No detail that was not reported: the client carries none.
+		{d: metrics.StationAuthorized, attrs: sta("phy1-ap0", "ap", client)},
+		{d: metrics.StationAirtime, attrs: sta("phy1-ap0", "ap", client, rx...)},
+		{d: metrics.StationExpectedThroughput, attrs: sta("phy1-ap0", "ap", client)},
+		{d: metrics.InterfaceTransmitPower, attrs: ifi("phy1-ap0", "ap", "phy1")},
 		// No noise or channel time that was not reported.
 		{d: metrics.ChannelNoise, attrs: ch("phy0", 2462)},
 		{d: metrics.ChannelTransmitTime, attrs: ch("phy0", 2462)},

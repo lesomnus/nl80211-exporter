@@ -3,6 +3,8 @@
 //
 // It only asks: for the interfaces, their stations, the survey of each radio,
 // and the names of the radios. It sets nothing and never starts a scan.
+// Interfaces and stations are asked twice: once through github.com/mdlayher/wifi,
+// and once more directly, for the attributes that library does not read.
 // None of it needs privileges, but nl80211 only shows the interfaces in the
 // caller's network namespace.
 package nl80211
@@ -24,14 +26,40 @@ import (
 // or its kernel has no cfg80211, i.e. no WiFi driver.
 var ErrNotAvailable = errors.New("nl80211 is not available")
 
-// Client is the part of *wifi.Client a Reader uses, so tests can stand in for the kernel.
+// Client is what a Reader asks nl80211 through, so tests can stand in for the kernel:
+// the part of *wifi.Client it uses, and the details that library does not read.
 type Client interface {
 	Interfaces() ([]*wifi.Interface, error)
 	StationInfo(ifi *wifi.Interface) ([]*wifi.StationInfo, error)
 	SurveyInfo(ifi *wifi.Interface) ([]*wifi.SurveyInfo, error)
 	PHYs() ([]*wifi.PHY, error)
+	// InterfaceDetails are by interface index.
+	InterfaceDetails() (map[int]InterfaceDetails, error)
+	// StationDetails are by station MAC address, as net.HardwareAddr.String gives it.
+	StationDetails(ifi *wifi.Interface) (map[string]StationDetails, error)
 	SetDeadline(t time.Time) error
 	Close() error
+}
+
+type client struct {
+	*wifi.Client
+	raw *raw
+}
+
+func (c *client) InterfaceDetails() (map[int]InterfaceDetails, error) {
+	return c.raw.interfaceDetails()
+}
+
+func (c *client) StationDetails(ifi *wifi.Interface) (map[string]StationDetails, error) {
+	return c.raw.stationDetails(ifi.Index)
+}
+
+func (c *client) SetDeadline(t time.Time) error {
+	return errors.Join(c.Client.SetDeadline(t), c.raw.c.SetDeadline(t))
+}
+
+func (c *client) Close() error {
+	return errors.Join(c.Client.Close(), c.raw.c.Close())
 }
 
 // Reader reads snapshots over one nl80211 connection.
@@ -43,14 +71,22 @@ type Reader struct {
 
 // Open connects to nl80211.
 func Open() (*Reader, error) {
-	c, err := wifi.New()
+	w, err := wifi.New()
 	if err != nil {
 		if runtime.GOOS != "linux" || errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w: %w", ErrNotAvailable, err)
 		}
 		return nil, err
 	}
-	return NewReader(c), nil
+	r, err := dialRaw()
+	if err != nil {
+		_ = w.Close()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %w", ErrNotAvailable, err)
+		}
+		return nil, err
+	}
+	return NewReader(&client{Client: w, raw: r}), nil
 }
 
 // NewReader reads through c, which Close closes.
@@ -84,6 +120,12 @@ func (r *Reader) Read(ctx context.Context) (*Snapshot, error) {
 	s := &Snapshot{Time: time.Now()}
 	var errs []error
 	surveyed := map[int]bool{}
+
+	// Details are extra: without them the rest is still read.
+	details, err := r.c.InterfaceDetails()
+	if err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		errs = append(errs, fmt.Errorf("interface details: %w", err))
+	}
 	for _, ifi := range ifis {
 		if ifi.Name == "" {
 			// A device without a network interface, e.g. for P2P.
@@ -103,11 +145,20 @@ func (r *Reader) Read(ctx context.Context) (*Snapshot, error) {
 			continue
 		}
 
+		var more map[string]StationDetails
+		if listed {
+			more, err = r.c.StationDetails(ifi)
+			if err != nil && !gone(err) && !errors.Is(err, errors.ErrUnsupported) {
+				errs = append(errs, fmt.Errorf("%s: station details: %w", ifi.Name, err))
+			}
+		}
+
 		phy := r.phyName(ifi.PHY)
 		x := Interface{
-			Name: ifi.Name,
-			Type: typeOf(ifi.Type),
-			PHY:  phy,
+			Name:             ifi.Name,
+			Type:             typeOf(ifi.Type),
+			PHY:              phy,
+			InterfaceDetails: details[ifi.Index],
 		}
 		if ifi.Frequency != 0 {
 			x.Frequency = ifi.Frequency
@@ -116,7 +167,9 @@ func (r *Reader) Read(ctx context.Context) (*Snapshot, error) {
 		if listed {
 			x.Stations = make([]Station, 0, len(stations))
 			for _, sta := range stations {
-				x.Stations = append(x.Stations, stationOf(sta))
+				st := stationOf(sta)
+				st.StationDetails = more[sta.HardwareAddr.String()]
+				x.Stations = append(x.Stations, st)
 			}
 		}
 		s.Interfaces = append(s.Interfaces, x)
@@ -238,6 +291,8 @@ func stationOf(s *wifi.StationInfo) Station {
 		TransmitRetries:    s.TransmitRetries,
 		TransmitFailed:     s.TransmitFailed,
 		BeaconLosses:       s.BeaconLoss,
+		ReceiveRate:        rateOf(s.ReceiveRateInfo),
+		TransmitRate:       rateOf(s.TransmitRateInfo),
 	}
 }
 
