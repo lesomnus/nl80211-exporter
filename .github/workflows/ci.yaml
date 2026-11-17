@@ -1,0 +1,27 @@
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci.yaml"
+      - "metrics/**"
+      - "nl80211/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - ".github/workflows/ci.yaml"
+      - "metrics/**"
+      - "nl80211/**"
+      - "go.mod"
+      - "go.sum"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -v -race ./...
