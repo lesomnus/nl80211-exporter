@@ -49,11 +49,29 @@ func (f *fakeReader) Read(context.Context) (*nl80211.Snapshot, error) {
 		Interfaces: []nl80211.Interface{
 			{
 				Name: "phy1-sta0", Type: nl80211.TypeStation, PHY: "phy1", Frequency: 5260, ChannelWidth: 80,
+				InterfaceDetails: nl80211.InterfaceDetails{SSID: "upstream", TransmitPower: nl80211.Value[float64]{V: 20, OK: true}, CenterFrequency: nl80211.Value[int]{V: 5290, OK: true}},
 				Stations: []nl80211.Station{{
 					MAC: upstream, Connected: 3 * time.Hour, Inactive: 330 * time.Millisecond,
 					Signal: -50, SignalAverage: -49, ReceiveBitrate: 1_200_900_000, TransmitBitrate: 1_080_600_000,
 					ReceivedBytes: 1000 * n, TransmittedBytes: 100 * n, ReceivedPackets: 10 * n, TransmittedPackets: n,
 					TransmitRetries: n, TransmitFailed: n, BeaconLosses: n,
+					ReceiveRate:  nl80211.Rate{Mode: "he", MCS: 11, Streams: 2, Width: 80},
+					TransmitRate: nl80211.Rate{Mode: "he", MCS: 9, Streams: 2, Width: 80},
+					StationDetails: nl80211.StationDetails{
+						ReceiveAirtime:      nl80211.Value[time.Duration]{V: time.Duration(n) * time.Second, OK: true},
+						TransmitAirtime:     nl80211.Value[time.Duration]{V: time.Duration(n) * 2 * time.Second, OK: true},
+						AckSignal:           nl80211.Value[int]{V: -46, OK: true},
+						AckSignalAverage:    nl80211.Value[int]{V: -47, OK: true},
+						BeaconSignalAverage: nl80211.Value[int]{V: -45, OK: true},
+						BeaconsReceived:     nl80211.Value[int]{V: 10 * n, OK: true},
+						ChainSignal:         map[int]int{0: -45, 1: -54},
+						ChainSignalAverage:  map[int]int{0: -45, 1: -53},
+						ExpectedThroughput:  nl80211.Value[int]{V: 1_002_200_000, OK: true},
+						ReceiveDropped:      nl80211.Value[int]{V: n, OK: true},
+						ReceivedMPDUs:       nl80211.Value[int]{V: 100 * n, OK: true},
+						FCSErrors:           nl80211.Value[int]{V: n, OK: true},
+						Authorized:          nl80211.Value[bool]{V: true, OK: true},
+					},
 				}},
 			},
 			{

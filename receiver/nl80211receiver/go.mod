@@ -5,7 +5,7 @@ go 1.26.2
 replace github.com/lesomnus/nl80211-exporter => ../..
 
 require (
-	github.com/lesomnus/nl80211-exporter v0.0.0-20261117082622-23dae630ec5d
+	github.com/lesomnus/nl80211-exporter v0.0.0-20261117123642-ac76767cfba5
 	go.opentelemetry.io/collector/component v1.69.0
 	go.opentelemetry.io/collector/component/componenttest v0.163.0
 	go.opentelemetry.io/collector/consumer v1.69.0
