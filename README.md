@@ -52,6 +52,14 @@ The share of time the channel was busy is the rate of `wifi.channel.busy_time` o
 and the share spent receiving other networks is the rate of `wifi.channel.receive_time` less `wifi.channel.bss_receive_time`, over the same.
 A weakening link shows as a lower signal first, then lower bitrates and more retries per packet.
 
+Retries per packet is the rate of `wifi.station.transmit_retries` over that of `wifi.station.packets` with `network.io.direction` `transmit`.
+It is approximate: retries count frames on the air (MPDUs), and packets count what was handed to the driver (MSDUs), several of which can share one aggregated frame.
+
+What `wifi.station.transmit_failures` counts depends on the driver.
+nl80211 calls it failed packets, and mac80211 counts a frame that was never acknowledged, after all its retries.
+On the MediaTek MT7981 (mt76) tried here, it stays within a fraction of a percent of `wifi.station.transmit_retries`: 983 and 983 for one station, 8,960 and 9,006 for another.
+There it reads as frames that needed a retry, not frames that were lost, and the retries are the measure to use.
+
 Airtime per byte is what moving data costs on air, and it folds signal, rate, retries, and aggregation into one number:
 the rate of `wifi.station.airtime` over that of `wifi.station.io`, in the same direction.
 Read it only over windows that moved enough data: small frames, like acknowledgements and keepalives, cost mostly fixed overhead.
